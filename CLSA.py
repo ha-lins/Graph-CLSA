@@ -84,6 +84,10 @@ class MLP(nn.Module):
     def forward(self, x):
         return self.net(x)
 
+def loss_fn(x, y):
+    x = F.normalize(x, dim=-1, p=2)
+    y = F.normalize(y, dim=-1, p=2)
+    return 2 - 2 * (x * y).sum(dim=-1)
 
 class CLSA(nn.Module):
     def __init__(self, net, hidden_dim, num_gc_layers, alpha=0.5, beta=1., 
@@ -155,6 +159,9 @@ class CLSA(nn.Module):
 
         sim_matrix = torch.exp(sim_matrix / T)
         pos_sim = sim_matrix[range(batch_size), range(batch_size)]
+        for i in range(batch_size):
+            for K in range():
+                cond_dis = sim_matrix[]
 
         loss = pos_sim / sim_matrix.sum(dim=1)
         # loss = - torch.log(loss) #.mean()
@@ -168,7 +175,7 @@ class CLSA(nn.Module):
 
 
 # main class
-# class Graph-CLSA(nn.Module):
+# class CLSA(nn.Module):
 #     def __init__(self, net, graph_size, hidden_layer = -2, projection_size = 256, projection_hidden_size = 4096, augment_fn = None, moving_average_decay = 0.99):
 #         super().__init__()
 #         # default SimCLR augmentation

@@ -19,7 +19,7 @@ from losses import *
 from gin import Encoder
 from evaluate_embedding import evaluate_embedding
 from model import *
-from CLSA import *
+from BYOL import *
 
 from arguments import arg_parse
 from torch_geometric.transforms import Constant
@@ -34,63 +34,6 @@ def setup_seed(seed):
     np.random.seed(seed)
     random.seed(seed)
 
-# class Graph-CLSA(nn.Module):
-#     def __init__(self, hidden_dim, num_gc_layers, alpha=0.5, beta=1.,
-#             gamma=.1):
-#         super(Graph-CLSA, self).__init__()
-# 
-#         self.alpha = alpha
-#         self.beta = beta
-#         self.gamma = gamma
-#         self.prior = args.prior
-# 
-#         self.embedding_dim = mi_units = hidden_dim * num_gc_layers
-#         self.encoder = Encoder(dataset_num_features, hidden_dim, num_gc_layers)
-# 
-#         self.init_emb()
-# 
-#     def init_emb(self):
-#         initrange = -1.5 / self.embedding_dim
-#         for m in self.modules():
-#             if isinstance(m, nn.Linear):
-#                 torch.nn.init.xavier_uniform_(m.weight.data)
-#                 if m.bias is not None:
-#                     m.bias.data.fill_(0.0)
-# 
-# 
-#     def forward(self, x, edge_index, batch, num_graphs):
-# 
-#         # batch_size = data.num_graphs
-#         if x is None:
-#             x = torch.ones(batch.shape[0]).to(device)
-# 
-#         y = self.encoder(x, edge_index, batch)
-# 
-#         return y
-# 
-#     def loss_cal(self, x, x_aug):
-#         # print('[info] x: ({}, {}), x_aug: ({}, {})'.format(x, x.size(), x_aug,
-#         #     x_aug.size()))
-#         T = 0.2
-#         batch_size, _ = x.size()
-#         x_abs = x.norm(dim=1)
-#         x_aug_abs = x_aug.norm(dim=1)
-# 
-#         sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
-# 
-#         sim_matrix = torch.exp(sim_matrix / T)
-#         pos_sim = sim_matrix[range(batch_size), range(batch_size)]
-# 
-#         loss = pos_sim / sim_matrix.sum(dim=1)
-#         # loss = - torch.log(loss) #.mean()
-# 
-#         return loss
-# 
-#     def clsa_loss(self, prediction, target):
-# 
-#         prediction = torch.log(prediction)
-# 
-#         return -target.mul(prediction).mean()#sum() / target.shape[0]
 
 if __name__ == '__main__':
 
@@ -98,9 +41,9 @@ if __name__ == '__main__':
     setup_seed(args.seed)
 
     accuracies = {'val':[], 'test':[]}
-    epochs = 100
+    epochs = 50
     log_interval = 10
-    batch_size = 128
+    batch_size = 32
     # batch_size = 512
     lr = args.lr
     DS = args.DS
@@ -123,7 +66,8 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     online_encoder = Encoder(dataset_num_features, args.hidden_dim, args.num_gc_layers)
-    model = CLSA(online_encoder, args.hidden_dim, args.num_gc_layers).to(device)
+    model = BYOL(online_encoder, args.hidden_dim, args.num_gc_layers,
+        use_momentum=False).to(device)
     # print(model)
     optimizer = torch.optim.Adam(model.online_encoder.parameters(), lr=lr)
 
@@ -159,14 +103,12 @@ if __name__ == '__main__':
             # x = model(data.x, data.edge_index, data.batch, data.num_graphs)
 
             if args.aug == 'dnodes' or args.aug == 'subgraph' or args.aug == 'random2' or args.aug == 'random3' or args.aug == 'random4':
-                # node_num_aug, _ = data_aug.x.size()
                 edge_idx = data_weak_aug.edge_index.numpy()
                 _, edge_num = edge_idx.shape
                 idx_not_missing = [n for n in range(node_num) if (n in edge_idx[0] or n in edge_idx[1])]
 
                 node_num_aug = len(idx_not_missing)
                 data_weak_aug.x = data_weak_aug.x[idx_not_missing]
-
 
 
                 data_weak_aug.batch = data.batch[idx_not_missing]
@@ -177,7 +119,6 @@ if __name__ == '__main__':
             if args.stro_aug == 'stro_dnodes' or args.stro_aug == \
                     'stro_subgraph' or args.stro_aug \
                     == 'random2' or args.stro_aug == 'random3' or args.stro_aug == 'random4':
-                # node_num_aug, _ = data_aug.x.size()
                 edge_idx = data_stro_aug.edge_index.numpy()
                 _, edge_num = edge_idx.shape
                 idx_not_missing = [n for n in range(node_num) if (n in edge_idx[0] or n in edge_idx[1])]
@@ -194,25 +135,29 @@ if __name__ == '__main__':
             data_stro_aug = data_stro_aug.to(device)
 
 
-            weak_proj, x_proj = model(data.x, data.edge_index, data.batch,
-                data.num_graphs,
-                data_weak_aug.x, data_weak_aug.edge_index,
-                data_weak_aug.batch, data_weak_aug.num_graphs)
-            target = model.loss_cal(x_proj, weak_proj)
-            loss_C = - torch.log(target).mean()
+            # weak_proj, x_proj = model(data.x, data.edge_index, data.batch,
+            #     data.num_graphs, data_weak_aug.x, data_weak_aug.edge_index,
+            #     data_weak_aug.batch, data_weak_aug.num_graphs)
+            # target = model.loss_cal(x_proj, weak_proj)
+            # loss_C = - torch.log(target).mean()
+            #
+            # stro_proj, x_proj = model(data.x, data.edge_index, data.batch,
+            #     data.num_graphs, data_stro_aug.x, data_stro_aug.edge_index,
+            #     data_stro_aug.batch, data_stro_aug.num_graphs)
+            # prediction = model.loss_cal(x_proj, stro_proj)
+            # loss_D = model.clsa_loss(prediction, target)
+            
+            # loss = loss_D.item() * data.num_graphs + loss_C
+            # print('Loss {}, Loss_D {}, Loss_C'.format(loss, loss_D, loss_C))
 
-            stro_proj, x_proj = model(data.x, data.edge_index, data.batch,
-                data.num_graphs, data_stro_aug.x, data_stro_aug.edge_index,
+            loss = model(data_weak_aug.x, data_weak_aug.edge_index,
+                data_weak_aug.batch, data_weak_aug.num_graphs, data_stro_aug.x, data_stro_aug.edge_index,
                 data_stro_aug.batch, data_stro_aug.num_graphs)
-            prediction = model.loss_cal(x_proj, stro_proj)
-
-            loss_D = model.clsa_loss(prediction, target)
-            loss = loss_D.item() * data.num_graphs + loss_C
-
             loss_all += loss
+
             loss.backward()
             optimizer.step()
-            model.update_moving_average()
+            # model.update_moving_average()
 
         print('Epoch {}, Loss {}'.format(epoch, loss_all / len(dataloader)))
 
@@ -225,7 +170,8 @@ if __name__ == '__main__':
             # print(accuracies['val'][-1], accuracies['test'][-1])
 
     tpe  = ('local' if args.local else '') + ('prior' if args.prior else '')
-    with open('logs/log_' + args.DS + '_' + args.aug + args.stro_aug, 'a+') as f:
+    with open('logs/log_CLSA' + args.DS + '_' + args.aug + '_' + args.stro_aug,
+            'a+') as f:
         s = json.dumps(accuracies)
         f.write('{},{},{},{},{},{},{}\n'.format(args.DS, tpe, args.num_gc_layers, epochs, log_interval, lr, s))
         f.write('\n')

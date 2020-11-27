@@ -299,6 +299,8 @@ class TUDataset_aug(InMemoryDataset):
             data_stro_aug = stro_subgraph(deepcopy(data))
         elif self.stro_aug == 'stro_dnodes':
             data_stro_aug = stro_drop_nodes(deepcopy(data))
+        elif self.stro_aug == 'subgraph':
+            data_stro_aug = subgraph(deepcopy(data))
         elif self.stro_aug == 'none':
             """
             if data.edge_index.max() > data.x.size()[0]:
@@ -423,13 +425,18 @@ def stro_drop_nodes(data):
 
     node_num, _ = data.x.size()
     _, edge_num = data.edge_index.size()
-    drop_num = int(node_num / 5)
+    drop_num = int(node_num / 2)
+    # print('[info] edge_num is:{}'.format(edge_num))
+
+    # print('[info] stro drop_num is:{}'.format(drop_num))
 
     idx_drop = np.random.choice(node_num, drop_num, replace=False)
+    # print('[info] stro idx_drop is:{}'.format(idx_drop))
 
     idx_nondrop = [n for n in range(node_num) if not n in idx_drop]
     idx_dict = {idx_nondrop[n]:n for n in list(range(node_num - drop_num))}
 
+    # data.x = data.x[idx_nondrop]
     edge_index = data.edge_index.numpy()
 
     adj = torch.zeros((node_num, node_num))
@@ -439,6 +446,11 @@ def stro_drop_nodes(data):
     edge_index = adj.nonzero().t()
 
     data.edge_index = edge_index
+    # print('[info] stro edge_index is:{}'.format(len(edge_index[0])))
+
+    # edge_index = [[idx_dict[edge_index[0, n]], idx_dict[edge_index[1, n]]] for n in range(edge_num) if (not edge_index[0, n] in idx_drop) and (not edge_index[1, n] in idx_drop)]
+    # edge_index = [[edge_index[0, n], edge_index[1, n]] for n in range(edge_num) if (not edge_index[0, n] in idx_drop) and (not edge_index[1, n] in idx_drop)] + [[n, n] for n in idx_nondrop]
+    # data.edge_index = torch.tensor(edge_index).transpose_(0, 1)
 
     return data
 
@@ -467,10 +479,7 @@ def subgraph(data):
 
     node_num, _ = data.x.size()
     _, edge_num = data.edge_index.size()
-    # print('[info] former edge_index is:{}'.format(len(data.edge_index[0])))
-    sub_num = int(node_num * 0.2)
-    # print('[info] node_num is:{}'.format(node_num))
-    # print('[info] sub_num is:{}'.format(sub_num))
+    sub_num = int(node_num * 0.1)
 
     edge_index = data.edge_index.numpy()
 
@@ -485,15 +494,12 @@ def subgraph(data):
         if len(idx_neigh) == 0:
             break
         sample_node = np.random.choice(list(idx_neigh))
-        # print('[info] idx_neigh is:{}'.format(idx_neigh))
-        # print('[info] sample_node is:{}'.format(sample_node))
         if sample_node in idx_sub:
             continue
         idx_sub.append(sample_node)
         idx_neigh.union(set([n for n in edge_index[1][edge_index[0]==idx_sub[-1]]]))
 
     idx_drop = [n for n in range(node_num) if not n in idx_sub]
-    # print('[info] idx_drop is:{}'.format(idx_drop))
 
     idx_nondrop = idx_sub
     idx_dict = {idx_nondrop[n]:n for n in list(range(len(idx_nondrop)))}
