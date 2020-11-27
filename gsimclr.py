@@ -25,63 +25,6 @@ from torch_geometric.transforms import Constant
 import pdb
 
 
-class GcnInfomax(nn.Module):
-  def __init__(self, hidden_dim, num_gc_layers, alpha=0.5, beta=1., gamma=.1):
-    super(GcnInfomax, self).__init__()
-
-    self.alpha = alpha
-    self.beta = beta
-    self.gamma = gamma
-    self.prior = args.prior
-
-    self.embedding_dim = mi_units = hidden_dim * num_gc_layers
-    self.encoder = Encoder(dataset_num_features, hidden_dim, num_gc_layers)
-
-    self.local_d = FF(self.embedding_dim)
-    self.global_d = FF(self.embedding_dim)
-    # self.local_d = MI1x1ConvNet(self.embedding_dim, mi_units)
-    # self.global_d = MIFCNet(self.embedding_dim, mi_units)
-
-    if self.prior:
-        self.prior_d = PriorDiscriminator(self.embedding_dim)
-
-    self.init_emb()
-
-  def init_emb(self):
-    initrange = -1.5 / self.embedding_dim
-    for m in self.modules():
-        if isinstance(m, nn.Linear):
-            torch.nn.init.xavier_uniform_(m.weight.data)
-            if m.bias is not None:
-                m.bias.data.fill_(0.0)
-
-
-  def forward(self, x, edge_index, batch, num_graphs):
-
-    # batch_size = data.num_graphs
-    if x is None:
-        x = torch.ones(batch.shape[0]).to(device)
-
-    y, M = self.encoder(x, edge_index, batch)
-    
-    g_enc = self.global_d(y)
-    l_enc = self.local_d(M)
-
-    mode='fd'
-    measure='JSD'
-    local_global_loss = local_global_loss_(l_enc, g_enc, edge_index, batch, measure)
- 
-    if self.prior:
-        prior = torch.rand_like(y)
-        term_a = torch.log(self.prior_d(prior)).mean()
-        term_b = torch.log(1.0 - self.prior_d(y)).mean()
-        PRIOR = - (term_a + term_b) * self.gamma
-    else:
-        PRIOR = 0
-    
-    return local_global_loss + PRIOR
-
-
 class simclr(nn.Module):
   def __init__(self, hidden_dim, num_gc_layers, alpha=0.5, beta=1., gamma=.1):
     super(simclr, self).__init__()
@@ -94,8 +37,6 @@ class simclr(nn.Module):
     self.embedding_dim = mi_units = hidden_dim * num_gc_layers
     self.encoder = Encoder(dataset_num_features, hidden_dim, num_gc_layers)
 
-    self.proj_head = nn.Sequential(nn.Linear(self.embedding_dim, self.embedding_dim), nn.ReLU(inplace=True), nn.Linear(self.embedding_dim, self.embedding_dim))
-
     self.init_emb()
 
   def init_emb(self):
@@ -113,9 +54,7 @@ class simclr(nn.Module):
     if x is None:
         x = torch.ones(batch.shape[0]).to(device)
 
-    y, M = self.encoder(x, edge_index, batch)
-    
-    y = self.proj_head(y)
+    x, y = self.encoder(x, edge_index, batch)
     
     return y
 
@@ -130,7 +69,6 @@ class simclr(nn.Module):
     sim_matrix = torch.exp(sim_matrix / T)
     pos_sim = sim_matrix[range(batch_size), range(batch_size)]
     loss = pos_sim / (sim_matrix.sum(dim=1) - pos_sim)
-    # print('[info] loss.size: {}'.format(loss.size()))
     loss = - torch.log(loss).mean()
 
     return loss
@@ -177,7 +115,6 @@ if __name__ == '__main__':
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = simclr(args.hidden_dim, args.num_gc_layers).to(device)
-    # print(model)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     print('================')
@@ -203,7 +140,7 @@ if __name__ == '__main__':
         for data in dataloader:
 
             # print('start')
-            data, data_aug, _ = data
+            data, data_aug, data_stro_aug = data
             optimizer.zero_grad()
 
             
@@ -229,7 +166,24 @@ if __name__ == '__main__':
                 edge_idx = [[idx_dict[edge_idx[0, n]], idx_dict[edge_idx[1, n]]] for n in range(edge_num) if not edge_idx[0, n] == edge_idx[1, n]]
                 data_aug.edge_index = torch.tensor(edge_idx).transpose_(0, 1)
 
+
+            if args.stro_aug == 'stro_dnodes' or args.stro_aug == \
+                    'stro_subgraph' or args.stro_aug \
+                    == 'random2' or args.stro_aug == 'random3' or args.stro_aug == 'random4':
+                edge_idx = data_stro_aug.edge_index.numpy()
+                _, edge_num = edge_idx.shape
+                idx_not_missing = [n for n in range(node_num) if (n in edge_idx[0] or n in edge_idx[1])]
+
+                node_num_aug = len(idx_not_missing)
+                data_stro_aug.x = data_stro_aug.x[idx_not_missing]
+
+                data_stro_aug.batch = data.batch[idx_not_missing]
+                idx_dict = {idx_not_missing[n]:n for n in range(node_num_aug)}
+                edge_idx = [[idx_dict[edge_idx[0, n]], idx_dict[edge_idx[1, n]]] for n in range(edge_num) if not edge_idx[0, n] == edge_idx[1, n]]
+                data_stro_aug.edge_index = torch.tensor(edge_idx).transpose_(0, 1)
+
             data_aug = data_aug.to(device)
+            data_stro_aug = data_stro_aug.to(device)
 
             '''
             print(data.edge_index)
@@ -244,10 +198,12 @@ if __name__ == '__main__':
             '''
 
             x_aug = model(data_aug.x, data_aug.edge_index, data_aug.batch, data_aug.num_graphs)
+            x_stro_aug = model(data_stro_aug.x, data_stro_aug.edge_index, data_stro_aug.batch,
+                data_stro_aug.num_graphs)
 
             # print(x)
             # print(x_aug)
-            loss = model.loss_cal(x, x_aug)
+            loss = model.loss_cal(x_stro_aug, x_aug)
             # print(loss)
             loss_all += loss.item() #* data.num_graphs
             loss.backward()
