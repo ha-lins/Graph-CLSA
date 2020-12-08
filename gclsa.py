@@ -19,7 +19,7 @@ from losses import *
 from gin import Encoder
 from evaluate_embedding import evaluate_embedding
 from model import *
-from BYOL import *
+from MOCO import *
 
 from arguments import arg_parse
 from torch_geometric.transforms import Constant
@@ -41,9 +41,9 @@ if __name__ == '__main__':
     setup_seed(args.seed)
 
     accuracies = {'val':[], 'test':[]}
-    epochs = 50
+    epochs = 80
     log_interval = 10
-    batch_size = 32
+    batch_size = 64
     # batch_size = 512
     lr = args.lr
     DS = args.DS
@@ -64,12 +64,12 @@ if __name__ == '__main__':
     dataloader_eval = DataLoader(dataset_eval, batch_size=batch_size)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    emb_dim = args.hidden_dim * args.num_gc_layers
 
     online_encoder = Encoder(dataset_num_features, args.hidden_dim, args.num_gc_layers)
-    model = BYOL(online_encoder, args.hidden_dim, args.num_gc_layers,
-        use_momentum=False).to(device)
+    model = MoCo(online_encoder, dim=emb_dim).to(device)
     # print(model)
-    optimizer = torch.optim.Adam(model.online_encoder.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(model.encoder_q.parameters(), lr=lr)
 
     print('================')
     print('lr: {}'.format(lr))
@@ -79,7 +79,7 @@ if __name__ == '__main__':
     print('================')
 
     model.eval()
-    emb, y = model.online_encoder.get_embeddings(dataloader_eval)
+    emb, y = model.encoder_q.get_embeddings(dataloader_eval)
     # print(emb.shape, y.shape)
 
     """
@@ -95,8 +95,11 @@ if __name__ == '__main__':
 
             # print('start')
             data, data_weak_aug, data_stro_aug = data
+            # print('data:{}, data_weak:{}, data_stro:{}'.format(
+            #     len(data.edge_index[0]),
+            #     len(data_weak_aug.edge_index[0]),
+            #     len(data_stro_aug.edge_index[0])))
             optimizer.zero_grad()
-
 
             node_num, _ = data.x.size()
             data = data.to(device)
@@ -150,7 +153,9 @@ if __name__ == '__main__':
             # loss = loss_D.item() * data.num_graphs + loss_C
             # print('Loss {}, Loss_D {}, Loss_C'.format(loss, loss_D, loss_C))
 
-            loss = model(data_weak_aug.x, data_weak_aug.edge_index,
+            loss = model(data.x, data.edge_index,
+                data.batch, data.num_graphs,
+                data_weak_aug.x, data_weak_aug.edge_index,
                 data_weak_aug.batch, data_weak_aug.num_graphs, data_stro_aug.x, data_stro_aug.edge_index,
                 data_stro_aug.batch, data_stro_aug.num_graphs)
             loss_all += loss
@@ -163,7 +168,7 @@ if __name__ == '__main__':
 
         if epoch % log_interval == 0:
             model.eval()
-            emb, y = model.online_encoder.get_embeddings(dataloader_eval)
+            emb, y = model.encoder_q.get_embeddings(dataloader_eval)
             acc_val, acc = evaluate_embedding(emb, y)
             accuracies['val'].append(acc_val)
             accuracies['test'].append(acc)
